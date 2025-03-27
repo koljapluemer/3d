@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>BLE Button Reader</title>
+    <script src="cordova.js"></script>
+    <style>
+      body { font-family: sans-serif; padding: 2em; }
+      #output { font-size: 1.2em; color: darkblue; margin-top: 1em; }
+    </style>
+  </head>
+  <body>
+    <h1>ESP32 Button Reader</h1>
+    <button onclick="scanAndConnect()">Scan & Connect</button>
+    <div id="output">No data yet.</div>
+
+    <script>
+      const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+      const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+      function log(text) {
+        document.getElementById('output').innerText = text;
+        console.log(text);
+      }
+
+      function scanAndConnect() {
+        log("Scanning for BLE device...");
+        ble.scan([SERVICE_UUID], 5, device => {
+          log("Found: " + device.name + " - " + device.id);
+          ble.connect(device.id, onConnect, onError);
+        }, onError);
+      }
+
+      function onConnect(peripheral) {
+        log("Connected to " + peripheral.id);
+
+        ble.startNotification(
+          peripheral.id,
+          SERVICE_UUID,
+          CHARACTERISTIC_UUID,
+          buffer => {
+            const message = new TextDecoder().decode(buffer);
+            log("Received: " + message);
+          },
+          onError
+        );
+      }
+
+      function onError(error) {
+        log("Error: " + JSON.stringify(error));
+      }
+    </script>
+  </body>
+</html>
