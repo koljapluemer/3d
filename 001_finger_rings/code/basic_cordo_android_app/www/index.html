@@ -7,20 +7,122 @@
     <style>
       body { font-family: sans-serif; padding: 2em; }
       #output { font-size: 1.2em; color: darkblue; margin-top: 1em; }
+      #currentSentence { font-size: 1.5em; margin: 1em 0; padding: 1em; background: #f0f0f0; }
+      #logArea { 
+        height: 200px; 
+        overflow-y: auto; 
+        background: #f8f8f8; 
+        padding: 1em; 
+        margin-top: 1em;
+        border: 1px solid #ddd;
+        font-family: monospace;
+      }
     </style>
   </head>
   <body>
     <h1>ESP32 Button Reader</h1>
     <button onclick="scanAndConnect()">Scan & Connect</button>
+    <div id="currentSentence">No sentence selected</div>
     <div id="output">No data yet.</div>
+    <div id="logArea"></div>
 
     <script>
       const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
       const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+      let sentences = null;
+      let currentAudio = null;
+      let lastButtonState = null;
+      let isPlaying = false;
+      let lastPlayTime = 0;
+      const DEBOUNCE_TIME = 1000; // Minimum time between plays in milliseconds
+
+      // Load sentences.json
+      fetch('learning_data/sentences.json')
+        .then(response => response.json())
+        .then(data => {
+          sentences = data;
+          addLog('Sentences loaded successfully');
+        })
+        .catch(error => {
+          addLog('Error loading sentences: ' + error);
+        });
+
+      function addLog(text) {
+        const logArea = document.getElementById('logArea');
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = document.createElement('div');
+        logEntry.textContent = `[${timestamp}] ${text}`;
+        logArea.insertBefore(logEntry, logArea.firstChild);
+        // Keep only last 50 log entries
+        while (logArea.children.length > 50) {
+          logArea.removeChild(logArea.lastChild);
+        }
+      }
 
       function log(text) {
         document.getElementById('output').innerText = text;
+        addLog(text);
         console.log(text);
+      }
+
+      function playRandomSentence() {
+        if (!sentences) {
+          log('Sentences not loaded yet');
+          return;
+        }
+
+        // Check if enough time has passed since last play
+        const now = Date.now();
+        if (now - lastPlayTime < DEBOUNCE_TIME) {
+          log('Skipping play - within debounce period');
+          return; // Skip if we're within the debounce period
+        }
+
+        // Get random sentence key
+        const keys = Object.keys(sentences);
+        const randomKey = keys[Math.floor(Math.random() * keys.length)];
+        const sentence = sentences[randomKey].join(' ');
+        
+        // Update display
+        document.getElementById('currentSentence').innerText = sentence;
+        log('Selected sentence: ' + sentence);
+        
+        // Stop any currently playing audio
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio = null;
+        }
+
+        // Create and play new audio
+        const audioPath = `learning_data/audio/sentences/ar/${randomKey.padStart(4, '0')}.mp3`;
+        log('Playing audio: ' + audioPath);
+        currentAudio = new Audio(audioPath);
+        currentAudio.play()
+          .then(() => {
+            lastPlayTime = now;
+            isPlaying = true;
+            log('Audio started playing');
+            // Reset isPlaying when audio finishes
+            currentAudio.onended = () => {
+              isPlaying = false;
+              log('Audio finished playing');
+            };
+          })
+          .catch(error => {
+            addLog('Error playing audio: ' + error.message);
+            isPlaying = false;
+          });
+      }
+
+      function handleButtonPress(message) {
+        addLog('Received message: ' + message);
+        
+        if (message === "Button 1 Pressed" || message === "Button 2 Pressed") {
+          log('Button pressed, playing sentence');
+          playRandomSentence();
+        } else {
+          addLog('Ignoring message: ' + message);
+        }
       }
 
       function scanAndConnect() {
@@ -40,7 +142,7 @@
           CHARACTERISTIC_UUID,
           buffer => {
             const message = new TextDecoder().decode(buffer);
-            log("Received: " + message);
+            handleButtonPress(message);
           },
           onError
         );
