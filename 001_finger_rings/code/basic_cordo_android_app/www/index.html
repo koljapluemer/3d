@@ -18,6 +18,12 @@
         border: 1px solid #ddd;
         font-family: monospace;
       }
+      #stats {
+        margin-top: 1em;
+        padding: 1em;
+        background: #f0f0f0;
+        border-radius: 5px;
+      }
     </style>
   </head>
   <body>
@@ -26,6 +32,7 @@
     <div id="currentSentence">No sentence selected</div>
     <div id="currentWord">No word selected</div>
     <div id="output">No data yet.</div>
+    <div id="stats">No learning stats yet</div>
     <div id="logArea"></div>
 
     <script>
@@ -52,13 +59,59 @@
       let currentWords = [];
       let currentWordIndex = 0;
 
+      // Learning data storage
+      const STORAGE_KEY = 'learned_sentences';
+      let learnedSentences = [];
+
+      // Load learning data from storage
+      function loadLearningData() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          learnedSentences = JSON.parse(stored);
+          updateStatsDisplay();
+        }
+      }
+
+      // Save learning data to storage
+      function saveLearningData() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(learnedSentences));
+      }
+
+      // Record a learned sentence
+      function recordLearnedSentence(sentenceKey) {
+        const now = new Date().toISOString();
+        learnedSentences.push({
+          sentenceKey: sentenceKey,
+          timestamp: now
+        });
+        saveLearningData();
+        updateStatsDisplay();
+      }
+
+      // Update the stats display
+      function updateStatsDisplay() {
+        const statsDiv = document.getElementById('stats');
+        const totalLearned = learnedSentences.length;
+        const today = new Date().toISOString().split('T')[0];
+        const learnedToday = learnedSentences.filter(s => 
+          s.timestamp.startsWith(today)
+        ).length;
+
+        statsDiv.innerHTML = `
+          <h3>Learning Statistics</h3>
+          <p>Total sentences learned: ${totalLearned}</p>
+          <p>Sentences learned today: ${learnedToday}</p>
+          <p>Last learned: ${learnedSentences.length > 0 ? new Date(learnedSentences[learnedSentences.length - 1].timestamp).toLocaleString() : 'Never'}</p>
+        `;
+      }
+
       // Load sentences.json
       fetch('learning_data/sentences.json')
         .then(response => response.json())
         .then(data => {
           sentences = data;
           addLog('Sentences loaded successfully');
-          // Don't start playing until BLE is connected
+          loadLearningData(); // Load learning data after sentences are loaded
         })
         .catch(error => {
           addLog('Error loading sentences: ' + error);
@@ -137,6 +190,8 @@
         playAudio(`learning_data/audio/sentences/en/${currentSentenceKey.padStart(4, '0')}.mp3`);
         currentState = State.PLAYING_EN_SENTENCE;
         lastPlayedState = State.PLAYING_EN_SENTENCE;
+        // Record the sentence as learned after playing both Arabic and English versions
+        recordLearnedSentence(currentSentenceKey);
       }
 
       function playAudio(path) {
