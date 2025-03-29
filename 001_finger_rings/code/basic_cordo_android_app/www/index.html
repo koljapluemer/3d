@@ -8,6 +8,7 @@
       body { font-family: sans-serif; padding: 2em; }
       #output { font-size: 1.2em; color: darkblue; margin-top: 1em; }
       #currentSentence { font-size: 1.5em; margin: 1em 0; padding: 1em; background: #f0f0f0; }
+      #currentWord { font-size: 1.2em; margin: 1em 0; padding: 1em; background: #e8f4f8; }
       #logArea { 
         height: 200px; 
         overflow-y: auto; 
@@ -23,6 +24,7 @@
     <h1>ESP32 Button Reader</h1>
     <button onclick="scanAndConnect()">Scan & Connect</button>
     <div id="currentSentence">No sentence selected</div>
+    <div id="currentWord">No word selected</div>
     <div id="output">No data yet.</div>
     <div id="logArea"></div>
 
@@ -31,10 +33,24 @@
       const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
       let sentences = null;
       let currentAudio = null;
-      let lastButtonState = null;
       let isPlaying = false;
       let lastPlayTime = 0;
       const DEBOUNCE_TIME = 1000; // Minimum time between plays in milliseconds
+
+      // State machine states
+      const State = {
+        WAITING_FOR_BUTTON: 'WAITING_FOR_BUTTON',
+        PLAYING_AR_WORD: 'PLAYING_AR_WORD',
+        PLAYING_EN_WORD: 'PLAYING_EN_WORD',
+        PLAYING_AR_SENTENCE: 'PLAYING_AR_SENTENCE',
+        PLAYING_EN_SENTENCE: 'PLAYING_EN_SENTENCE'
+      };
+
+      let currentState = State.WAITING_FOR_BUTTON;
+      let lastPlayedState = null;  // Track what was last played
+      let currentSentenceKey = null;
+      let currentWords = [];
+      let currentWordIndex = 0;
 
       // Load sentences.json
       fetch('learning_data/sentences.json')
@@ -42,6 +58,7 @@
         .then(data => {
           sentences = data;
           addLog('Sentences loaded successfully');
+          // Don't start playing until BLE is connected
         })
         .catch(error => {
           addLog('Error loading sentences: ' + error);
@@ -53,7 +70,6 @@
         const logEntry = document.createElement('div');
         logEntry.textContent = `[${timestamp}] ${text}`;
         logArea.insertBefore(logEntry, logArea.firstChild);
-        // Keep only last 50 log entries
         while (logArea.children.length > 50) {
           logArea.removeChild(logArea.lastChild);
         }
@@ -65,63 +81,114 @@
         console.log(text);
       }
 
-      function playRandomSentence() {
+      function selectNewRandomSentence() {
         if (!sentences) {
           log('Sentences not loaded yet');
           return;
         }
 
-        // Check if enough time has passed since last play
-        const now = Date.now();
-        if (now - lastPlayTime < DEBOUNCE_TIME) {
-          log('Skipping play - within debounce period');
-          return; // Skip if we're within the debounce period
+        const keys = Object.keys(sentences);
+        currentSentenceKey = keys[Math.floor(Math.random() * keys.length)];
+        currentWords = [...sentences[currentSentenceKey]];
+        
+        // Shuffle the words
+        for (let i = currentWords.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [currentWords[i], currentWords[j]] = [currentWords[j], currentWords[i]];
         }
 
-        // Get random sentence key
-        const keys = Object.keys(sentences);
-        const randomKey = keys[Math.floor(Math.random() * keys.length)];
-        const sentence = sentences[randomKey].join(' ');
-        
-        // Update display
+        currentWordIndex = 0;
+        const sentence = currentWords.join(' ');
         document.getElementById('currentSentence').innerText = sentence;
-        log('Selected sentence: ' + sentence);
+        log('Selected new sentence: ' + sentence);
         
-        // Stop any currently playing audio
+        // Start with first word
+        playCurrentWordArabic();
+      }
+
+      function playCurrentWordArabic() {
+        if (currentWordIndex >= currentWords.length) {
+          // We're done with words, play the full sentence
+          playFullSentenceArabic();
+          return;
+        }
+
+        const word = currentWords[currentWordIndex];
+        document.getElementById('currentWord').innerText = word;
+        playAudio(`learning_data/audio/words/ar/${word}.mp3`);
+        currentState = State.PLAYING_AR_WORD;
+        lastPlayedState = State.PLAYING_AR_WORD;
+      }
+
+      function playCurrentWordEnglish() {
+        const word = currentWords[currentWordIndex];
+        playAudio(`learning_data/audio/words/en/${word}.mp3`);
+        currentState = State.PLAYING_EN_WORD;
+        lastPlayedState = State.PLAYING_EN_WORD;
+      }
+
+      function playFullSentenceArabic() {
+        playAudio(`learning_data/audio/sentences/ar/${currentSentenceKey.padStart(4, '0')}.mp3`);
+        currentState = State.PLAYING_AR_SENTENCE;
+        lastPlayedState = State.PLAYING_AR_SENTENCE;
+      }
+
+      function playFullSentenceEnglish() {
+        playAudio(`learning_data/audio/sentences/en/${currentSentenceKey.padStart(4, '0')}.mp3`);
+        currentState = State.PLAYING_EN_SENTENCE;
+        lastPlayedState = State.PLAYING_EN_SENTENCE;
+      }
+
+      function playAudio(path) {
         if (currentAudio) {
           currentAudio.pause();
           currentAudio = null;
         }
 
-        // Create and play new audio
-        const audioPath = `learning_data/audio/sentences/ar/${randomKey.padStart(4, '0')}.mp3`;
-        log('Playing audio: ' + audioPath);
-        currentAudio = new Audio(audioPath);
+        log('Playing: ' + path);
+        currentAudio = new Audio(path);
         currentAudio.play()
           .then(() => {
-            lastPlayTime = now;
+            lastPlayTime = Date.now();
             isPlaying = true;
-            log('Audio started playing');
-            // Reset isPlaying when audio finishes
             currentAudio.onended = () => {
               isPlaying = false;
+              currentState = State.WAITING_FOR_BUTTON;
               log('Audio finished playing');
             };
           })
           .catch(error => {
             addLog('Error playing audio: ' + error.message);
             isPlaying = false;
+            currentState = State.WAITING_FOR_BUTTON;
           });
       }
 
       function handleButtonPress(message) {
-        addLog('Received message: ' + message);
+        // Don't process "Both Buttons Pressed" messages
+        if (message === "Both Buttons Pressed") {
+          return;
+        }
         
         if (message === "Button 1 Pressed" || message === "Button 2 Pressed") {
-          log('Button pressed, playing sentence');
-          playRandomSentence();
-        } else {
-          addLog('Ignoring message: ' + message);
+          if (currentState === State.WAITING_FOR_BUTTON) {
+            if (currentWordIndex < currentWords.length) {
+              // We're still in word mode
+              if (lastPlayedState === State.PLAYING_AR_WORD) {
+                playCurrentWordEnglish();
+              } else if (lastPlayedState === State.PLAYING_EN_WORD) {
+                currentWordIndex++;
+                playCurrentWordArabic();
+              }
+            } else {
+              // We're in sentence mode
+              if (lastPlayedState === State.PLAYING_AR_SENTENCE) {
+                playFullSentenceEnglish();
+              } else if (lastPlayedState === State.PLAYING_EN_SENTENCE) {
+                selectNewRandomSentence();
+              }
+            }
+          }
         }
       }
 
@@ -146,6 +213,9 @@
           },
           onError
         );
+
+        // Start playing only after BLE is connected
+        selectNewRandomSentence();
       }
 
       function onError(error) {
