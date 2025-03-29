@@ -8,7 +8,7 @@
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // Define your button pins (active LOW)
-const int buttonPin1 = 1;  // Button 1 on GPIO1
+const int buttonPin1 = 2;  // Button 1 on GPIO1
 const int buttonPin2 = 5;  // Button 2 on GPIO5
 
 BLECharacteristic *pCharacteristic;
