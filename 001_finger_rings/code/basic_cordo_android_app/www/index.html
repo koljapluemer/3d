@@ -258,16 +258,32 @@
           if (currentWordIndex < currentWords.length) {
             // We're still in word mode
             if (lastPlayedState === State.PLAYING_AR_WORD) {
-              playCurrentWordEnglish();
+              // If we just played Arabic, check which button was pressed
+              if (message === "Button 1 Pressed") {
+                // Button 0: repeat Arabic
+                playCurrentWordArabic();
+              } else {
+                // Button 1: play English
+                playCurrentWordEnglish();
+              }
             } else if (lastPlayedState === State.PLAYING_EN_WORD) {
+              // After English, always move forward
               currentWordIndex++;
               playCurrentWordArabic();
             }
           } else {
             // We're in sentence mode
             if (lastPlayedState === State.PLAYING_AR_SENTENCE) {
-              playFullSentenceEnglish();
+              // If we just played Arabic sentence, check which button was pressed
+              if (message === "Button 1 Pressed") {
+                // Button 0: repeat Arabic sentence
+                playFullSentenceArabic();
+              } else {
+                // Button 1: play English sentence
+                playFullSentenceEnglish();
+              }
             } else if (lastPlayedState === State.PLAYING_EN_SENTENCE) {
+              // After English sentence, always move to next sentence
               selectNewRandomSentence();
             }
           }
