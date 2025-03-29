@@ -42,7 +42,7 @@
       let currentAudio = null;
       let isPlaying = false;
       let lastPlayTime = 0;
-      const DEBOUNCE_TIME = 1000; // Minimum time between plays in milliseconds
+      const DEBOUNCE_TIME = 100; // Reduced to 100ms for faster response
 
       // State machine states
       const State = {
@@ -58,6 +58,7 @@
       let currentSentenceKey = null;
       let currentWords = [];
       let currentWordIndex = 0;
+      let isProcessingButton = false;  // Prevent double-processing of button presses
 
       // Learning data storage
       const STORAGE_KEY = 'learned_sentences';
@@ -200,9 +201,16 @@
           currentAudio = null;
         }
 
-        log('Playing: ' + path);
-        currentAudio = new Audio(path);
-        currentAudio.play()
+        // Check if audio file exists
+        fetch(path, { method: 'HEAD' })
+          .then(response => {
+            if (!response.ok) {
+              throw new Error('Audio file not found');
+            }
+            log('Playing: ' + path);
+            currentAudio = new Audio(path);
+            return currentAudio.play();
+          })
           .then(() => {
             lastPlayTime = Date.now();
             isPlaying = true;
@@ -213,9 +221,16 @@
             };
           })
           .catch(error => {
-            addLog('Error playing audio: ' + error.message);
+            addLog('Error playing audio: ' + path + ' - ' + error.message);
             isPlaying = false;
             currentState = State.WAITING_FOR_BUTTON;
+            // Move to next word/sentence if audio file not found
+            if (currentWordIndex < currentWords.length) {
+              currentWordIndex++;
+              playCurrentWordArabic();
+            } else {
+              selectNewRandomSentence();
+            }
           });
       }
 
@@ -226,24 +241,41 @@
         }
         
         if (message === "Button 1 Pressed" || message === "Button 2 Pressed") {
-          if (currentState === State.WAITING_FOR_BUTTON) {
-            if (currentWordIndex < currentWords.length) {
-              // We're still in word mode
-              if (lastPlayedState === State.PLAYING_AR_WORD) {
-                playCurrentWordEnglish();
-              } else if (lastPlayedState === State.PLAYING_EN_WORD) {
-                currentWordIndex++;
-                playCurrentWordArabic();
-              }
-            } else {
-              // We're in sentence mode
-              if (lastPlayedState === State.PLAYING_AR_SENTENCE) {
-                playFullSentenceEnglish();
-              } else if (lastPlayedState === State.PLAYING_EN_SENTENCE) {
-                selectNewRandomSentence();
-              }
+          // Prevent double-processing of button presses
+          if (isProcessingButton) {
+            return;
+          }
+          isProcessingButton = true;
+
+          // Check if enough time has passed since last play
+          const now = Date.now();
+          if (now - lastPlayTime < DEBOUNCE_TIME) {
+            isProcessingButton = false;
+            return;
+          }
+
+          // Process the button press based on last played state
+          if (currentWordIndex < currentWords.length) {
+            // We're still in word mode
+            if (lastPlayedState === State.PLAYING_AR_WORD) {
+              playCurrentWordEnglish();
+            } else if (lastPlayedState === State.PLAYING_EN_WORD) {
+              currentWordIndex++;
+              playCurrentWordArabic();
+            }
+          } else {
+            // We're in sentence mode
+            if (lastPlayedState === State.PLAYING_AR_SENTENCE) {
+              playFullSentenceEnglish();
+            } else if (lastPlayedState === State.PLAYING_EN_SENTENCE) {
+              selectNewRandomSentence();
             }
           }
+
+          // Reset the processing flag after a short delay
+          setTimeout(() => {
+            isProcessingButton = false;
+          }, DEBOUNCE_TIME);
         }
       }
 
