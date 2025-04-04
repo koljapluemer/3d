@@ -29,6 +29,7 @@
   <body>
     <h1>ESP32 Button Reader</h1>
     <button onclick="scanAndConnect()">Scan & Connect</button>
+    <button onclick="downloadButtonLogs()">Download Button Logs</button>
     <div id="currentSentence">No sentence selected</div>
     <div id="currentWord">No word selected</div>
     <div id="output">No data yet.</div>
@@ -40,6 +41,7 @@
       const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
       let sentences = null;
       let currentAudio = null;
+      let feedbackAudio = null;
       let isPlaying = false;
       let lastPlayTime = 0;
       const DEBOUNCE_TIME = 100; // Reduced to 100ms for faster response
@@ -49,8 +51,12 @@
         WAITING_FOR_BUTTON: 'WAITING_FOR_BUTTON',
         PLAYING_AR_WORD: 'PLAYING_AR_WORD',
         PLAYING_EN_WORD: 'PLAYING_EN_WORD',
+        WAITING_WORD_RATING: 'WAITING_WORD_RATING',
+        PLAYING_WORD_FEEDBACK: 'PLAYING_WORD_FEEDBACK',
         PLAYING_AR_SENTENCE: 'PLAYING_AR_SENTENCE',
-        PLAYING_EN_SENTENCE: 'PLAYING_EN_SENTENCE'
+        PLAYING_EN_SENTENCE: 'PLAYING_EN_SENTENCE',
+        WAITING_SENTENCE_RATING: 'WAITING_SENTENCE_RATING',
+        PLAYING_SENTENCE_FEEDBACK: 'PLAYING_SENTENCE_FEEDBACK'
       };
 
       let currentState = State.WAITING_FOR_BUTTON;
@@ -62,7 +68,45 @@
 
       // Learning data storage
       const STORAGE_KEY = 'learned_sentences';
+      const BUTTON_LOGS_KEY = 'button_press_logs';
       let learnedSentences = [];
+      let buttonPressLogs = [];
+
+      // Load button press logs from storage
+      function loadButtonLogs() {
+        const stored = localStorage.getItem(BUTTON_LOGS_KEY);
+        if (stored) {
+          buttonPressLogs = JSON.parse(stored);
+        }
+      }
+
+      // Save button press logs to storage
+      function saveButtonLogs() {
+        localStorage.setItem(BUTTON_LOGS_KEY, JSON.stringify(buttonPressLogs));
+      }
+
+      // Add a button press log entry
+      function logButtonPress(context) {
+        buttonPressLogs.push({
+          timestamp: new Date().toISOString(),
+          context: context
+        });
+        saveButtonLogs();
+      }
+
+      // Download button press logs as JSON
+      function downloadButtonLogs() {
+        const dataStr = JSON.stringify(buttonPressLogs, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `button_press_logs_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
 
       // Load learning data from storage
       function loadLearningData() {
@@ -113,6 +157,7 @@
           sentences = data;
           addLog('Sentences loaded successfully');
           loadLearningData(); // Load learning data after sentences are loaded
+          loadButtonLogs(); // Load button press logs
         })
         .catch(error => {
           addLog('Error loading sentences: ' + error);
@@ -160,42 +205,25 @@
         playCurrentWordArabic();
       }
 
-      function playCurrentWordArabic() {
-        if (currentWordIndex >= currentWords.length) {
-          // We're done with words, play the full sentence
-          playFullSentenceArabic();
-          return;
+      // Function to play feedback sound
+      function playFeedbackSound(isCorrect) {
+        if (feedbackAudio) {
+          feedbackAudio.pause();
+          feedbackAudio = null;
         }
-
-        const word = currentWords[currentWordIndex];
-        document.getElementById('currentWord').innerText = word;
-        playAudio(`learning_data/audio/words/ar/${word}.mp3`);
-        currentState = State.PLAYING_AR_WORD;
-        lastPlayedState = State.PLAYING_AR_WORD;
+        
+        const soundPath = isCorrect ? 
+          'learning_data/audio/feedback/right.wav' : 
+          'learning_data/audio/feedback/wrong.mp3';
+        
+        feedbackAudio = new Audio(soundPath);
+        feedbackAudio.play().catch(error => {
+          addLog('Error playing feedback sound: ' + error.message);
+        });
       }
 
-      function playCurrentWordEnglish() {
-        const word = currentWords[currentWordIndex];
-        playAudio(`learning_data/audio/words/en/${word}.mp3`);
-        currentState = State.PLAYING_EN_WORD;
-        lastPlayedState = State.PLAYING_EN_WORD;
-      }
-
-      function playFullSentenceArabic() {
-        playAudio(`learning_data/audio/sentences/ar/${currentSentenceKey.padStart(4, '0')}.mp3`);
-        currentState = State.PLAYING_AR_SENTENCE;
-        lastPlayedState = State.PLAYING_AR_SENTENCE;
-      }
-
-      function playFullSentenceEnglish() {
-        playAudio(`learning_data/audio/sentences/en/${currentSentenceKey.padStart(4, '0')}.mp3`);
-        currentState = State.PLAYING_EN_SENTENCE;
-        lastPlayedState = State.PLAYING_EN_SENTENCE;
-        // Record the sentence as learned after playing both Arabic and English versions
-        recordLearnedSentence(currentSentenceKey);
-      }
-
-      function playAudio(path) {
+      // Function to play audio with feedback
+      function playAudio(path, isCorrect = null) {
         if (currentAudio) {
           currentAudio.pause();
           currentAudio = null;
@@ -216,8 +244,15 @@
             isPlaying = true;
             currentAudio.onended = () => {
               isPlaying = false;
-              currentState = State.WAITING_FOR_BUTTON;
+              // Don't reset state to WAITING_FOR_BUTTON if we're in a rating or feedback state
+              if (currentState !== State.WAITING_WORD_RATING && 
+                  currentState !== State.WAITING_SENTENCE_RATING &&
+                  currentState !== State.PLAYING_WORD_FEEDBACK &&
+                  currentState !== State.PLAYING_SENTENCE_FEEDBACK) {
+                currentState = State.WAITING_FOR_BUTTON;
+              }
               log('Audio finished playing');
+              addLog(`Audio finished, current state: ${currentState}`);
             };
           })
           .catch(error => {
@@ -234,6 +269,66 @@
           });
       }
 
+      function playCurrentWordArabic() {
+        if (currentWordIndex >= currentWords.length) {
+          // We're done with words, play the full sentence
+          playFullSentenceArabic();
+          return;
+        }
+
+        const word = currentWords[currentWordIndex];
+        document.getElementById('currentWord').innerText = word;
+        playAudio(`learning_data/audio/words/ar/${word}.mp3`);
+        currentState = State.PLAYING_AR_WORD;
+        lastPlayedState = State.PLAYING_AR_WORD;
+      }
+
+      function playCurrentWordEnglish() {
+        const word = currentWords[currentWordIndex];
+        playAudio(`learning_data/audio/words/en/${word}.mp3`);
+        currentState = State.PLAYING_EN_WORD;
+        lastPlayedState = State.PLAYING_EN_WORD;
+        addLog(`State changed to PLAYING_EN_WORD for word "${word}"`);
+      }
+
+      function playFullSentenceArabic() {
+        playAudio(`learning_data/audio/sentences/ar/${currentSentenceKey.padStart(4, '0')}.mp3`);
+        currentState = State.PLAYING_AR_SENTENCE;
+        lastPlayedState = State.PLAYING_AR_SENTENCE;
+      }
+
+      function playFullSentenceEnglish() {
+        playAudio(`learning_data/audio/sentences/en/${currentSentenceKey.padStart(4, '0')}.mp3`);
+        currentState = State.PLAYING_EN_SENTENCE;
+        lastPlayedState = State.PLAYING_EN_SENTENCE;
+        addLog(`State changed to PLAYING_EN_SENTENCE for sentence ${currentSentenceKey}`);
+      }
+
+      function handleRating(isCorrect) {
+        addLog(`Handling rating: ${isCorrect ? 'correct' : 'incorrect'}, current state: ${currentState}`);
+        playFeedbackSound(isCorrect);
+        // Set appropriate feedback state
+        if (currentState === State.WAITING_WORD_RATING) {
+          currentState = State.PLAYING_WORD_FEEDBACK;
+        } else if (currentState === State.WAITING_SENTENCE_RATING) {
+          currentState = State.PLAYING_SENTENCE_FEEDBACK;
+        }
+        addLog(`State changed to ${currentState} while playing feedback`);
+        
+        // Wait for feedback sound to finish before moving on
+        if (feedbackAudio) {
+          feedbackAudio.onended = () => {
+            addLog(`Feedback sound finished, current state: ${currentState}`);
+            if (currentState === State.PLAYING_WORD_FEEDBACK) {
+              currentWordIndex++;
+              playCurrentWordArabic();
+            } else if (currentState === State.PLAYING_SENTENCE_FEEDBACK) {
+              selectNewRandomSentence();
+            }
+          };
+        }
+      }
+
       function handleButtonPress(message) {
         // Don't process "Both Buttons Pressed" messages
         if (message === "Both Buttons Pressed") {
@@ -241,8 +336,11 @@
         }
         
         if (message === "Button 1 Pressed" || message === "Button 2 Pressed") {
+          addLog(`Button pressed: ${message}, Current state: ${currentState}, Last played state: ${lastPlayedState}`);
+          
           // Prevent double-processing of button presses
           if (isProcessingButton) {
+            addLog('Ignoring button press - still processing previous press');
             return;
           }
           isProcessingButton = true;
@@ -250,26 +348,36 @@
           // Check if enough time has passed since last play
           const now = Date.now();
           if (now - lastPlayTime < DEBOUNCE_TIME) {
+            addLog(`Ignoring button press - too soon since last play (${now - lastPlayTime}ms)`);
             isProcessingButton = false;
             return;
           }
 
-          // Process the button press based on last played state
-          if (currentWordIndex < currentWords.length) {
+          // Process the button press based on current state
+          if (currentState === State.WAITING_WORD_RATING || currentState === State.WAITING_SENTENCE_RATING) {
+            addLog(`Processing rating button press in state: ${currentState}`);
+            // Handle rating
+            const isCorrect = message === "Button 1 Pressed";
+            const context = currentState === State.WAITING_WORD_RATING ? 
+              `Word "${currentWords[currentWordIndex]}" rated as ${isCorrect ? "correct" : "incorrect"}` :
+              `Sentence ${currentSentenceKey} rated as ${isCorrect ? "correct" : "incorrect"}`;
+            logButtonPress(context);
+            handleRating(isCorrect);
+          } else if (currentWordIndex < currentWords.length) {
             // We're still in word mode
             if (lastPlayedState === State.PLAYING_AR_WORD) {
               // If we just played Arabic, check which button was pressed
               if (message === "Button 1 Pressed") {
                 // Button 0: repeat Arabic
                 playCurrentWordArabic();
+                logButtonPress(`Word "${currentWords[currentWordIndex]}" repeated in Arabic`);
               } else {
                 // Button 1: play English
                 playCurrentWordEnglish();
+                logButtonPress(`Word "${currentWords[currentWordIndex]}" played in English`);
+                currentState = State.WAITING_WORD_RATING;
+                addLog(`State changed to WAITING_WORD_RATING after English word`);
               }
-            } else if (lastPlayedState === State.PLAYING_EN_WORD) {
-              // After English, always move forward
-              currentWordIndex++;
-              playCurrentWordArabic();
             }
           } else {
             // We're in sentence mode
@@ -278,19 +386,21 @@
               if (message === "Button 1 Pressed") {
                 // Button 0: repeat Arabic sentence
                 playFullSentenceArabic();
+                logButtonPress(`Sentence ${currentSentenceKey} repeated in Arabic`);
               } else {
                 // Button 1: play English sentence
                 playFullSentenceEnglish();
+                logButtonPress(`Sentence ${currentSentenceKey} played in English`);
+                currentState = State.WAITING_SENTENCE_RATING;
+                addLog(`State changed to WAITING_SENTENCE_RATING after English sentence`);
               }
-            } else if (lastPlayedState === State.PLAYING_EN_SENTENCE) {
-              // After English sentence, always move to next sentence
-              selectNewRandomSentence();
             }
           }
 
           // Reset the processing flag after a short delay
           setTimeout(() => {
             isProcessingButton = false;
+            addLog('Button processing flag reset');
           }, DEBOUNCE_TIME);
         }
       }
