@@ -96,16 +96,39 @@
 
       // Download button press logs as JSON
       function downloadButtonLogs() {
+        addLog('Preparing to share button logs...');
+        
+        // Create the JSON string
         const dataStr = JSON.stringify(buttonPressLogs, null, 2);
-        const dataBlob = new Blob([dataStr], { type: 'application/json' });
-        const url = URL.createObjectURL(dataBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `button_press_logs_${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const fileName = `button_press_logs_${new Date().toISOString().split('T')[0]}.json`;
+        
+        if (window.cordova && window.plugins && window.plugins.socialsharing) {
+          // Share directly as text
+          window.plugins.socialsharing.share(
+            dataStr, // The actual content
+            fileName, // Subject/title
+            null, // Image
+            null, // URL
+            function() {
+              addLog('Logs shared successfully');
+            },
+            function(error) {
+              addLog('Error sharing logs: ' + JSON.stringify(error));
+              alert('Failed to share logs: ' + JSON.stringify(error));
+            }
+          );
+        } else {
+          // Web fallback
+          const blob = new Blob([dataStr], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
       }
 
       // Load learning data from storage
