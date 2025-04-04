@@ -224,9 +224,14 @@
 
       // Function to play audio with feedback
       function playAudio(path, isCorrect = null) {
+        // Stop any currently playing audio
         if (currentAudio) {
           currentAudio.pause();
           currentAudio = null;
+        }
+        if (feedbackAudio) {
+          feedbackAudio.pause();
+          feedbackAudio = null;
         }
 
         // Check if audio file exists
@@ -365,8 +370,8 @@
             handleRating(isCorrect);
           } else if (currentWordIndex < currentWords.length) {
             // We're still in word mode
-            if (lastPlayedState === State.PLAYING_AR_WORD) {
-              // If we just played Arabic, check which button was pressed
+            if (lastPlayedState === State.PLAYING_AR_WORD || currentState === State.PLAYING_AR_WORD) {
+              // If we just played Arabic or are currently playing Arabic
               if (message === "Button 1 Pressed") {
                 // Button 0: repeat Arabic
                 playCurrentWordArabic();
@@ -378,11 +383,17 @@
                 currentState = State.WAITING_WORD_RATING;
                 addLog(`State changed to WAITING_WORD_RATING after English word`);
               }
+            } else if (currentState === State.PLAYING_EN_WORD) {
+              // If English is currently playing, interrupt it and handle rating
+              const isCorrect = message === "Button 1 Pressed";
+              const context = `Word "${currentWords[currentWordIndex]}" rated as ${isCorrect ? "correct" : "incorrect"}`;
+              logButtonPress(context);
+              handleRating(isCorrect);
             }
           } else {
             // We're in sentence mode
-            if (lastPlayedState === State.PLAYING_AR_SENTENCE) {
-              // If we just played Arabic sentence, check which button was pressed
+            if (lastPlayedState === State.PLAYING_AR_SENTENCE || currentState === State.PLAYING_AR_SENTENCE) {
+              // If we just played Arabic sentence or are currently playing Arabic sentence
               if (message === "Button 1 Pressed") {
                 // Button 0: repeat Arabic sentence
                 playFullSentenceArabic();
@@ -394,6 +405,12 @@
                 currentState = State.WAITING_SENTENCE_RATING;
                 addLog(`State changed to WAITING_SENTENCE_RATING after English sentence`);
               }
+            } else if (currentState === State.PLAYING_EN_SENTENCE) {
+              // If English sentence is currently playing, interrupt it and handle rating
+              const isCorrect = message === "Button 1 Pressed";
+              const context = `Sentence ${currentSentenceKey} rated as ${isCorrect ? "correct" : "incorrect"}`;
+              logButtonPress(context);
+              handleRating(isCorrect);
             }
           }
 
